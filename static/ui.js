@@ -3863,7 +3863,14 @@ function renderMd(raw, opts){
   function _localImage(alt, url) {
     if (!opts || !opts.localImageUrlFn) return null;
     const base = opts.localBase || '';
-    let resolved = base + url.replace(/^\//, '');
+    let resolved;
+    // If url is absolute (starts with /), pass it as-is — the API can serve
+    // it directly from the mounted volumes. Don't prepend base dir.
+    if (url.startsWith('/')) {
+      resolved = url;
+    } else {
+      resolved = base + url;
+    }
     // Block parent-directory traversal
     if (/^(?:\.\/)?\.\./.test(resolved) || /\/\.\.(?:\/|$)/.test(resolved)) return null;
     return opts.localImageUrlFn(resolved);

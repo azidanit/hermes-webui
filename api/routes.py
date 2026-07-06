@@ -11497,6 +11497,21 @@ def _handle_media(handler, parsed):
 def _file_raw_target(session, sid: str, rel: str) -> tuple[Path, Path] | None:
     """Resolve /api/file/raw paths from the workspace or this session's uploads."""
     workspace_root = Path(session.workspace)
+    # Handle absolute paths (e.g. /home/zidanhermes/... or /home/hermeswebui/...)
+    # These are used by the agent when referencing images in markdown files.
+    if rel.startswith('/'):
+        try:
+            target = Path(rel).resolve()
+            # Only allow files under known trusted roots (mounted volumes)
+            trusted = [workspace_root.resolve(), Path('/home/hermeswebui/.hermes').resolve(), Path('/zidanhermes').resolve()]
+            for t in trusted:
+                if t.exists() and str(target).startswith(str(t.resolve())):
+                    if target.exists() and target.is_file():
+                        # Return the trusted root as anchor so open_anchored_fd works
+                        return t, target
+            return None
+        except Exception:
+            pass
     try:
         target = safe_resolve(workspace_root, rel)
     except ValueError:
