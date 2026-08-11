@@ -11,6 +11,8 @@ Issue: #720 (configurable busy-input behaviour)
 """
 from pathlib import Path
 
+from tests.helpers import source_between as _source_between
+
 ROOT = Path(__file__).parent.parent
 CONFIG_PY = (ROOT / "api" / "config.py").read_text(encoding="utf-8")
 COMMANDS_JS = (ROOT / "static" / "commands.js").read_text(encoding="utf-8")
@@ -20,14 +22,6 @@ BOOT_JS = (ROOT / "static" / "boot.js").read_text(encoding="utf-8")
 PANELS_JS = (ROOT / "static" / "panels.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
 I18N_JS = (ROOT / "static" / "i18n.js").read_text(encoding="utf-8")
-
-
-def _source_between(src, start_marker, end_marker):
-    start = src.find(start_marker)
-    assert start >= 0, f"{start_marker} not found"
-    end = src.find(end_marker, start)
-    assert end > start, f"{end_marker} not found after {start_marker}"
-    return src[start:end]
 
 
 # ── Backend: setting registration + enum validation ─────────────────────
@@ -102,20 +96,23 @@ class TestSlashCommandHandlers:
         assert "cancelStream" in body, "/interrupt must call cancelStream() so the drain re-sends"
 
     def test_cmd_steer_delegates_to_try_steer(self):
-        """/steer delegates to _trySteer which calls /api/chat/steer with
-        a non-destructive fallback. The fallback path is exercised by tests
-        in test_real_steer.py — this test just pins the delegation."""
+        """/steer delegates to _trySteer which calls /api/chat/steer.
+        Fallback behavior is covered in test_real_steer.py; this test pins
+        delegation and blocks the old cancel-on-failure path."""
         idx = COMMANDS_JS.find("async function cmdSteer(")
         assert idx >= 0
         body = COMMANDS_JS[idx:idx + 800]
-        # cmdSteer delegates to _trySteer; fallback must not queue+cancel.
+        # cmdSteer delegates to _trySteer; fallback must not cancel.
         assert "_trySteer" in body, "cmdSteer must call _trySteer to use the real /api/chat/steer endpoint"
-        # The shared helper must contain the non-destructive fallback path.
+        # The shared helper must contain the non-cancelling fallback path.
         helper_idx = COMMANDS_JS.find("async function _trySteer(")
         assert helper_idx >= 0, "_trySteer helper must exist"
         helper_body = _source_between(COMMANDS_JS, "async function _trySteer(", "\nasync function cmdTitle")
-        assert "queueSessionMessage" not in helper_body
         assert "cancelStream" not in helper_body
+        gateway_fallback_idx = helper_body.find("result&&result.fallback==='gateway_steer_queued'")
+        gateway_queue_idx = helper_body.find("queueSessionMessage", gateway_fallback_idx)
+        assert gateway_fallback_idx >= 0
+        assert gateway_queue_idx > gateway_fallback_idx
         assert "inp.value" in helper_body
         assert "if(result&&result.accepted)" in helper_body
         assert "S.pendingFiles=_remaining" in helper_body

@@ -94,28 +94,30 @@ def test_content_visibility_scoped_to_user_rows():
     )
 
 
-def test_restore_same_frame_holds_position_for_unpinned_reader():
-    """The absolute-top fallback must be skipped for an unpinned reader.
+def test_restore_same_frame_holds_position_for_unpinned_touch_reader():
+    """The absolute-top fallback must be skipped when native anchoring can hold.
 
     When the reader is scrolled up (userUnpinned) and the anchor restore failed,
     _restoreMessageScrollSnapshotSameFrame must NOT write an absolute snapshot.top
     (it goes stale and nudges the viewport backward as scrollHeight grows, #5637).
-    It should hold position and return before the el.scrollTop write.
+    It should hold position and return before the el.scrollTop write. Desktop
+    intentionally falls through to the explicit fallback because it has no
+    native overflow-anchor layer.
     """
     fn = _restore_same_frame_fn()
-    assert "snapshot.userUnpinned===true&&snapshot.pinned!==true" in fn, (
-        "The fallback must guard the unpinned/anchor-failed case (#5637)."
+    assert "snapshot.userUnpinned===true&&snapshot.pinned!==true&&_fbTouchHold" in fn, (
+        "The fallback must guard the unpinned/anchor-failed touch case (#5637)."
     )
     # The guard must sit BEFORE the absolute-top scrollTop write and short-circuit it.
     guard_idx = fn.index("snapshot.userUnpinned===true&&snapshot.pinned!==true")
-    # the absolute-top write in the fallback
-    write_idx = fn.index("el.scrollTop=Math.max(0,Math.min(target,maxTop))")
+    # the desktop fallback scrollTop write (round-3: realigned _fbTarget, not raw snapshot.top)
+    write_idx = fn.index("el.scrollTop=_fbTarget")
     assert guard_idx < write_idx, (
-        "The unpinned guard must precede (and return before) the absolute-top "
+        "The unpinned guard must precede (and return before) the fallback "
         "scrollTop write so it is never reached for an unpinned reader (#5637)."
     )
     # Between the guard and the write there must be an early return.
     between = fn[guard_idx:write_idx]
     assert "return;" in between, (
-        "The unpinned guard must `return` before the absolute-top write (#5637)."
+        "The unpinned guard must `return` before the fallback write (#5637)."
     )

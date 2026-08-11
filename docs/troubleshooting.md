@@ -159,6 +159,46 @@ turn in the exhausted session instead of being blocked with recovery guidance.
 
 ---
 
+## Installed PWA opens to a blank screen after an update
+
+**Symptom.** The installed PWA or home-screen app opens to a blank screen after a WebUI update, while the same URL often works again in a normal browser tab.
+
+**Why.** Reverse proxies are supported, but proxy basic auth can challenge the same-origin `sw.js`, manifest, or versioned `static/*` fetches the installed app needs while its service worker updates the shell.
+
+**Diagnostic.**
+
+1. Open the same WebUI URL in a regular browser tab and confirm whether it loads there.
+2. Check reverse-proxy logs for `401` responses on `/sw.js`, `/manifest.json`, or versioned `/static/*` assets during the update.
+3. Temporarily remove proxy basic auth and use WebUI's built-in password. If the blank screen stops after the next update, the proxy auth challenge was the trigger.
+
+**Fix.** Prefer WebUI's own password for installed PWAs. If you keep proxy basic auth, configure it so the same-origin service-worker and shell update fetches can complete. If the installed shell is already blank, clear site data for the Hermes origin, then reopen or reinstall the PWA after that site-scoped cleanup.
+
+**When to file a bug.** File a WebUI bug if the blank screen still reproduces without proxy basic auth, or after the proxy allows the same-origin service-worker and shell update fetches through.
+
+---
+
+## "Hermes Agent was updated while Hermes WebUI was running"
+
+**Symptom.** An action that uses the in-process Agent runtime stops with a message telling you to restart Hermes WebUI. This can happen after `hermes update`, a Git checkout/pull in the Agent source tree, or another tool updates Hermes Agent without restarting the already-running WebUI backend.
+
+**Why.** WebUI currently imports `run_agent.AIAgent` into its long-lived Python process. Python keeps imported modules in memory. Continuing after a known Agent Git revision changes could combine cached modules from the old revision with source read from the new revision, producing misleading `ImportError`s or inconsistent runtime state. For local Agent-backed chat, WebUI therefore returns a retryable `409 agent_runtime_stale` before claiming or mutating session state instead of attempting a partial in-process reload. Gateway-backed chat runs in the gateway process and is not blocked by this WebUI-local check. Non-Git Agent installs preserve their existing behavior because there is no revision identity to compare.
+
+**Diagnostic.** Compare the running WebUI process start time with the Agent checkout revision and recent update history. If the Agent was updated after WebUI started, restart WebUI before investigating individual missing-symbol errors.
+
+**Fix.** Restart using the same launch method that started WebUI:
+
+```bash
+./ctl.sh restart
+# Or, for a user systemd service:
+systemctl --user restart hermes-webui.service
+```
+
+If you launched `python3 bootstrap.py` in the foreground, stop it with Ctrl-C and start it again. Restarting the whole computer or WSL is not required when restarting the WebUI backend succeeds.
+
+**When to file a bug.** File a WebUI bug if the restart-required message appears even though the Agent revision did not change, or if a clean WebUI restart still produces the same import error. Include the WebUI launch method, WebUI revision, Agent revision, and the sanitized error text.
+
+---
+
 ## Other troubleshooting
 
 This document grows over time. If a recurring failure mode isn't covered here yet, add it via PR. The format for each entry: **Symptom → Why → Diagnostic commands → Fix → When to file a bug**.

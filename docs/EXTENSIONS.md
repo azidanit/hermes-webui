@@ -165,7 +165,8 @@ opt-in proxy:
       "sidecar": {
         "type": "loopback",
         "origin": "http://127.0.0.1:17787",
-        "health_path": "/health"
+        "health_path": "/health",
+        "proxy_auth": "token-v1"
       }
     }
   ]
@@ -177,6 +178,39 @@ by diagnostics so an operator can see that a local companion service was
 declared and optionally check its health from the browser. If the operator later
 approves the proxy in **Settings → Extensions**, WebUI may proxy requests only
 through the fixed per-extension sidecar path for that extension.
+
+### Sidecar proxy authentication (`proxy_auth`)
+
+The loopback port a sidecar binds is reachable by **any local process**, and the
+proxy strips every inbound credential (cookies, `Authorization`, CSRF, `x-hermes-*`)
+before forwarding — so a sidecar cannot, on its own, tell a proxied request from a
+direct one. The `proxy_auth` field closes that gap:
+
+- **`token-v1`** (recommended for any sidecar that mutates state) — WebUI mints a
+  per-extension secret at `STATE_DIR/sidecar-auth/<id>.token` (mode `0600`) and
+  injects it as the `X-Hermes-Sidecar-Token` header on every proxied request. The
+  sidecar resolves the token file in this order — `HERMES_EXT_SIDECAR_TOKEN_FILE`
+  → `$HERMES_WEBUI_STATE_DIR/sidecar-auth/<id>.token` →
+  `$HERMES_HOME/webui/sidecar-auth/<id>.token` → platform default
+  (`~/.hermes/webui/…`, `%LOCALAPPDATA%\hermes\webui\…` on Windows) — and must
+  validate the header on every route except `/health`, returning **`401` on a
+  missing/mismatched token** and **`503` when the token file is absent/unreadable**.
+  The canonical scaffold in the extensions repository (`examples/`, see
+  `docs/SIDECAR_CONTRACT.md`) does all of this for you — do not hand-roll it.
+- **absent (or the explicit literal `"legacy"`)** — **legacy** mode (no token;
+  unchanged behavior). Only appropriate for read-only, non-sensitive sidecars.
+- Any **other** value fails closed (the sidecar declaration is rejected).
+
+**Auth-off posture:** WebUI authentication is optional and off by default. Because
+the consent endpoint and proxy route are unauthenticated in that mode, `token-v1`
+fails closed regardless of whether the sidecar origin is loopback: consent and proxy
+resolution return `403` until WebUI authentication is configured. Otherwise, any
+caller that can reach WebUI could ask core to inject the token and use it as a
+forwarding oracle. The extensions panel exposes the `local_unprotected` posture so
+the operator is told to enable authentication before granting consent. The token
+protects against other-UID and sandboxed local callers; it does **not** defend against
+arbitrary same-UID code (which can read the token file, WebUI's own signing key, or
+run the sidecar's tool directly).
 
 Extension entries may declare browser-local settings when they also request
 extension-owned storage:
@@ -236,6 +270,35 @@ Settings persist only non-default overrides. Resetting settings removes those
 overrides and returns schema defaults. Extension-owned storage uses a separate
 browser-local namespace, and clearing storage removes that namespace without
 changing settings.
+
+### Cooperative extension identity
+
+An injected extension can claim a stable browser-page identity together with its
+existing settings and storage accessors:
+
+```js
+const ext = window.hermesExt.register("desktop-companion");
+if (ext) {
+  ext.settings.set("show_badge", false);
+  ext.storage.set("lastPanel", "settings");
+}
+```
+
+`register(id)` trims the ID and succeeds only for an ID in the effective-enabled,
+Core-sanitized manifest inventory that was present at the initial page boot. It
+returns `null` for empty, malformed, unknown, or untrusted IDs without creating
+settings or storage state. Re-registering the same ID in one page returns the
+same handle object; different IDs receive different handles. The handle exposes
+only the canonical `id`, `settings`, and `storage` fields, backed by the same
+factories used by the legacy accessors.
+
+Manifest enable/disable changes still take effect after a WebUI reload. A handle
+already created in the current page may remain cached across a status refresh;
+this is expected and does not implement runtime unload. This identity is a
+cooperative attribution convenience for extensions sharing the page—not a
+sandbox, isolation mechanism, capability or permission system, or security
+boundary. Extensions still execute with the full WebUI session authority
+described above.
 
 ## URL rules
 
